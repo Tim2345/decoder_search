@@ -3,6 +3,11 @@ import pickle
 
 from operator import itemgetter
 
+#define number of sentences in final dataset
+n_sents = 10000
+# define max length of sentences in final dataset
+max_len = 100
+
 # read in italian data
 f = open('europarl-v7.it-en.it', 'r', encoding='utf-8')
 it_text = f.read()
@@ -29,14 +34,13 @@ for it, en  in zip(it_new[:n], en_new[:n]):
 count = 0
 valid = []
 for it, en in zip(it_new, en_new):
-    if len(it.split())<100 and len(it.split())<100:
+    if len(it.split())<max_len and len(it.split())<max_len:
         valid.append(count)
     count += 1
 
 seed = 42
 random.seed(seed)
 
-n_sents = 20
 indices = sorted(random.sample(valid, n_sents))
 
 # finalize texts
