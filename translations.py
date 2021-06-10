@@ -1,6 +1,5 @@
 from transformers import MarianMTModel, MarianTokenizer
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 from nltk.translate.bleu_score import sentence_bleu, corpus_bleu
 from nltk.tokenize import word_tokenize
 from time import time
@@ -29,12 +28,10 @@ class MTDataset(torch.utils.data.Dataset):
     def __len__(self):
         return self.n_samples
 
-
 #define bleu function
 def get_cumulative_bleu(reference_sents, candidate_sents):
     reference_tokens = [word_tokenize(sent) for sent in reference_sents]
     candidate_tokens = [word_tokenize(sent) for sent in candidate_sents]
-
 
     weights = ((1,0,0,0), (.5,.5,0,0), (.33,.33,.33,0), (.25,.25,.25,.25))
 
@@ -47,7 +44,6 @@ def get_cumulative_bleu(reference_sents, candidate_sents):
     scores = scores.values.reshape(len(weights), len(reference_tokens)).T
 
     return pd.DataFrame(scores)
-
 
 def inference_run(tokenizer, dataloader, model, *args, **kwargs):
 
@@ -91,7 +87,7 @@ encoded_sentences_italian = it_en_tokenizer(sentences['italian'], return_tensors
 
 #instantiate dataset and dataloader for italian -> english models
 it_en_model_dataset = MTDataset(encoded_sentences_italian, len(sentences['sent_id']))
-it_en_model_dataloader = DataLoader(it_en_model_dataset, batch_size=10)
+it_en_model_dataloader = DataLoader(it_en_model_dataset, batch_size=25)
 
 # instantiate italian -> english models
 it_en_greedy_model = MarianMTModel.from_pretrained(it_en, output_scores=True)
@@ -99,40 +95,44 @@ it_en_beam_model = MarianMTModel.from_pretrained(it_en, output_scores=True)
 
 # run inference on italian -> english models
 translated_sents_greedy_en = inference_run(it_en_tokenizer, it_en_model_dataloader, it_en_greedy_model)
-translated_sents_beam_en = inference_run(it_en_tokenizer, it_en_model_dataloader, it_en_greedy_model)
+translated_sents_beam_en = inference_run(it_en_tokenizer, it_en_model_dataloader, it_en_beam_model)
 
 
-###################### change language model
+###################### change translation direction
 # prepare english -> italian data
 en_it_tokenizer = MarianTokenizer.from_pretrained(en_it)
 encoded_sentences_english = en_it_tokenizer(sentences['english'], return_tensors='pt', padding=True)
 
 #instantiate dataset and dataloader for english -> italian models
 en_it_model_dataset = MTDataset(encoded_sentences_english, len(sentences['sent_id']))
-en_it_model_dataloader = DataLoader(en_it_model_dataset, batch_size=10)
+en_it_model_dataloader = DataLoader(en_it_model_dataset, batch_size=25)
 
 # instantiate english -> italian models
-it_en_greedy_model = MarianMTModel.from_pretrained(it_en, output_scores=True)
-it_en_beam_model = MarianMTModel.from_pretrained(it_en, output_scores=True)
+en_it_greedy_model = MarianMTModel.from_pretrained(en_it, output_scores=True)
+en_it_beam_model = MarianMTModel.from_pretrained(en_it, output_scores=True)
 
-translated_sents_greedy_it = inference_run(en_it_tokenizer, it_en_model_dataloader, it_en_greedy_model)
-translated_sents_beam_it = inference_run(en_it_tokenizer, it_en_model_dataloader, it_en_greedy_model)
+translated_sents_greedy_it = inference_run(en_it_tokenizer, en_it_model_dataloader, en_it_greedy_model)
+translated_sents_beam_it = inference_run(en_it_tokenizer, en_it_model_dataloader, en_it_beam_model)
 
 
 sentences_df = pd.DataFrame(sentences)
 
 output_df = pd.DataFrame({
     'sent_id': sentences['sent_id'],
-    'it_en_greedy': translated_sents_greedy_it,
-    'it_en_beam': translated_sents_beam_it,
-    'en_it_greedy': translated_sents_greedy_en,
-    'en_it_beam': translated_sents_beam_en
+    'it_en_greedy': translated_sents_greedy_en,
+    'it_en_beam': translated_sents_beam_en,
+    'en_it_greedy': translated_sents_greedy_it,
+    'en_it_beam': translated_sents_beam_it
 })
 
 results_df = sentences_df.merge(output_df, on='sent_id')
 results_df['it_en_match'] = results_df['it_en_greedy'] == results_df['it_en_beam']
 results_df['en_it_match'] = results_df['en_it_greedy'] == results_df['en_it_beam']
 
+
+f = open('MT_beam_df_'+results_df, "wb", encoding='utf-8')
+pickle.dump(results_df, f)
+f.close()
 
 it_en_greedy_bleu = get_cumulative_bleu(results_df['english'], results_df['it_en_greedy'])
 it_en_greedy_bleu.columns = ['it_en_greedy_bleu1', 'it_en_greedy_bleu2', 'it_en_greedy_bleu3', 'it_en_greedy_bleu4']
@@ -151,13 +151,9 @@ bleu_df = pd.concat((it_en_greedy_bleu, it_en_beam_bleu, en_it_greedy_bleu, en_i
 final_df = pd.concat([results_df, bleu_df], axis=1)
 
 
-f = open('MT_beam_df_'+data_path, "wb")
+f = open('MT_beam_df_'+results_df, "wb")
 pickle.dump(final_df, f)
 f.close()
 
-
-corpus_bleu(results_df['english'], results_df['it_en_greedy'], weights=(.5,.5,0,0))
-
-
-
-count
+# line will be used in analysis script
+#corpus_bleu(results_df['english'], results_df['it_en_greedy'], weights=(.5,.5,0,0))
