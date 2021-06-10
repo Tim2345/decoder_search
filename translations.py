@@ -23,7 +23,6 @@ class MTDataset(torch.utils.data.Dataset):
         self.n_samples = n_samples
 
     def __getitem__(self, idx):
-        #item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
         item = {key: val[idx].clone().detach() for key, val in self.encodings.items()}
         return item
 
@@ -50,86 +49,74 @@ def get_cumulative_bleu(reference_sents, candidate_sents):
     return pd.DataFrame(scores)
 
 
+def inference_run(tokenizer, dataloader, model, *args, **kwargs):
+
+    count = 1
+    start_time = time()
+
+    model.to('cuda')
+
+    translated_sents = []
+    with torch.no_grad():
+        for batch in dataloader:
+            iter_start = time()
+
+            input_ids = batch['input_ids'].to('cuda')
+            attention_mask = batch['attention_mask'].to('cuda')
+
+            translated = model.generate(input_ids, attention_mask=attention_mask, *args, **kwargs)
+
+            # extract translated sentences
+            translated_decoded = [tokenizer.decode(t, skip_special_tokens=True) for t in translated]
+
+            # add decoded sentences to list
+            translated_sents.extend(translated_decoded)
+
+            print("\nCompleted iteration {} of {}. ".format(count, len(it_en_model_dataloader)))
+            print("Iteration time: {}.".format(round(time() - iter_start, 2)))
+            print("Total inference time: {}.".format(round((time() - start_time) / 60, 2)))
+
+            count += 1
+
+    return translated_sents
+
+
 #load pickled data
 f = open(data_path, 'rb')
 sentences = pickle.load(f)
 
-model_name = it_en
-it_en_tokenizer = MarianTokenizer.from_pretrained(model_name)
+# prepare italian -> english data
+it_en_tokenizer = MarianTokenizer.from_pretrained(it_en)
 encoded_sentences_italian = it_en_tokenizer(sentences['italian'], return_tensors='pt', padding=True)
 
-#data_loader = DataLoader(encoded_sentences_italian, shuffle=True, batch_size=10)
+#instantiate dataset and dataloader for italian -> english models
 it_en_model_dataset = MTDataset(encoded_sentences_italian, len(sentences['sent_id']))
 it_en_model_dataloader = DataLoader(it_en_model_dataset, batch_size=10)
 
-#encoded_sentences_english = en_it_tokenizer(sentences['english'], return_tensors='pt', padding=True)
+# instantiate italian -> english models
+it_en_greedy_model = MarianMTModel.from_pretrained(it_en, output_scores=True)
+it_en_beam_model = MarianMTModel.from_pretrained(it_en, output_scores=True)
 
-it_en_model = MarianMTModel.from_pretrained(it_en, output_scores=True)
-
-it_en_model.to('cuda')
-translated_sents_greedy_it = []
-translated_sents_beam_it = []
-
-count = 1
-start_time = time()
-with torch.no_grad():
-    for batch in it_en_model_dataloader:
-        iter_start = time()
-
-        input_ids = batch['input_ids'].to('cuda')
-        attention_mask = batch['attention_mask'].to('cuda')
-
-        translated_greedy = it_en_model.generate(input_ids, attention_mask=attention_mask, num_beams=1)
-        translated_beam = it_en_model.generate(input_ids, attention_mask=attention_mask, num_beams=30)
-
-        # extract translated sentences
-        translated_greedy_decoded = [it_en_tokenizer.decode(t, skip_special_tokens=True) for t in translated_greedy]
-        translated_beam_decoded = [it_en_tokenizer.decode(t, skip_special_tokens=True) for t in translated_beam]
-
-        # add decoded sentences to list
-        translated_sents_greedy_it.extend(translated_greedy_decoded)
-        translated_sents_beam_it.extend(translated_beam_decoded)
-
-        print("\nCompleted iteration {} of {}. ".format(count, len(it_en_model_dataloader)))
-        print("Iteration time: {}.".format(round(time()-iter_start, 2)))
-        print("Inference time: {}.".format(round((time()-start_time)/60, 2)))
-
-        count += 1
+# run inference on italian -> english models
+translated_sents_greedy_en = inference_run(it_en_tokenizer, it_en_model_dataloader, it_en_greedy_model)
+translated_sents_beam_en = inference_run(it_en_tokenizer, it_en_model_dataloader, it_en_greedy_model)
 
 
-torch.cuda.empty_cache()
-
-
-
-
-
-model_name = en_it
-en_it_tokenizer = MarianTokenizer.from_pretrained(model_name)
+###################### change language model
+# prepare english -> italian data
+en_it_tokenizer = MarianTokenizer.from_pretrained(en_it)
 encoded_sentences_english = en_it_tokenizer(sentences['english'], return_tensors='pt', padding=True)
 
-#data_loader = DataLoader(encoded_sentences_italian, shuffle=True, batch_size=10)
+#instantiate dataset and dataloader for english -> italian models
 en_it_model_dataset = MTDataset(encoded_sentences_english, len(sentences['sent_id']))
 en_it_model_dataloader = DataLoader(en_it_model_dataset, batch_size=10)
 
-#encoded_sentences_english = en_it_tokenizer(sentences['english'], return_tensors='pt', padding=True)
+# instantiate english -> italian models
+it_en_greedy_model = MarianMTModel.from_pretrained(it_en, output_scores=True)
+it_en_beam_model = MarianMTModel.from_pretrained(it_en, output_scores=True)
 
-en_it_model = MarianMTModel.from_pretrained(en_it, output_scores=True)
-
-en_it_model.to('cuda')
-translated_sents_greedy_en = []
-translated_sents_beam_en = []
-
-for batch in tqdm(en_it_model_dataloader):
-
-    input_ids = batch['input_ids'].to('cuda')
-    attention_mask = batch['attention_mask'].to('cuda')
-
-    translated_greedy = en_it_model.generate(input_ids, attention_mask=attention_mask, num_beams=1)
-    translated_beam = en_it_model.generate(input_ids, attention_mask=attention_mask, num_beams=30)
-
-    # extract translated sentences
-    translated_sents_greedy_en.extend([en_it_tokenizer.decode(t, skip_special_tokens=True) for t in translated_greedy])
-    translated_sents_beam_en.extend([en_it_tokenizer.decode(t, skip_special_tokens=True) for t in translated_beam])
+translated_sents_greedy_it = inference_run(en_it_tokenizer, it_en_model_dataloader, it_en_greedy_model)
+translated_sents_beam_it = inference_run(en_it_tokenizer, it_en_model_dataloader, it_en_greedy_model)
 
 
 sentences_df = pd.DataFrame(sentences)
